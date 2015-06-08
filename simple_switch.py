@@ -32,6 +32,7 @@ from ryu.lib.packet import ethernet
 
 import fcntl
 import json
+import random
 import socket
 import threading
 import select
@@ -81,8 +82,8 @@ class SimpleSwitch(app_manager.RyuApp):
                     # TODO Port number should be assigned dynamically 
                     self.packet_translate2(guest_addr=msg["dst_ipv4"], 
                       host_addr=msg["remote_host_ipv4"], bridge_mac=IPOPBR_MAC,
-                      src_mac=msg["src_mac"], transport_port=10001,
-                      output_ovs_port=1, dst_port=msg["dst_port"], dst_mac=msg["dst_mac"])
+                      src_mac=msg["src_mac"], nw_proto=msg["nw_proto"], #transport_port=msg["transport_port"],
+                      output_ovs_port=1, dst_port=msg["dst_port"], dst_mac=msg["dst_mac"], random_port=msg["random_port"])
  
 
     def ipv4_to_int(self, string):
@@ -94,19 +95,21 @@ class SimpleSwitch(app_manager.RyuApp):
             i = (i << 8) | b
         return i
 
-    def packet_translate2(self, guest_addr, host_addr, bridge_mac, src_mac, transport_port, output_ovs_port, dst_port, dst_mac):
-        print "packet_translate {0} {1} {2} {3} {4} {5} {6} {7}".format(guest_addr, host_addr, bridge_mac, src_mac, transport_port, output_ovs_port, dst_port, dst_mac)  
+    def packet_translate2(self, guest_addr, host_addr, bridge_mac, src_mac, nw_proto, transport_port, output_ovs_port, dst_port, dst_mac, random_port):
+        print "packet_translate {0} {1} {2} {3} {4} {5} {6} {7} {8} {9}".format(guest_addr, host_addr, bridge_mac, src_mac, nw_proto, transport_port, output_ovs_port, dst_port, dst_mac, random_port)  
         #time.sleep(3)
         if self.datapath == None:
             return
         ofproto = self.datapath.ofproto
+        #random_port = random.randint(49152, 65535)
         #match = self.datapath.ofproto_parser.OFPMatch(dl_type=0x0800, nw_dst=self.ipv4_to_int(guest_addr), nw_dst_mask=32, tp_dst=5001)
         #match = self.datapath.ofproto_parser.OFPMatch(dl_type=0x0800, dl_dst=haddr_to_bin(dst_mac), nw_dst=self.ipv4_to_int(guest_addr), nw_dst_mask=32)
         #match = self.datapath.ofproto_parser.OFPMatch(dl_type=0x0800, nw_dst=self.ipv4_to_int(guest_addr), nw_dst_mask=32, tp_dst=5001)
-        match = self.datapath.ofproto_parser.OFPMatch(dl_type=0x0800, nw_dst=self.ipv4_to_int(guest_addr), nw_dst_mask=32)
+        match = self.datapath.ofproto_parser.OFPMatch(dl_type=0x0800, nw_dst=self.ipv4_to_int(guest_addr), nw_dst_mask=32, nw_proto=nw_proto, tp_dst=dst_port)
         actions = []
         actions.append(self.datapath.ofproto_parser.OFPActionSetNwDst(self.ipv4_to_int(host_addr)))
         actions.append(self.datapath.ofproto_parser.OFPActionSetDlDst(haddr_to_bin(bridge_mac)))
+        actions.append(self.datapath.ofproto_parser.OFPActionSetTpDst(random_port))
         actions.append(self.datapath.ofproto_parser.OFPActionOutput(65534))
         mod = self.datapath.ofproto_parser.OFPFlowMod(
             datapath=self.datapath, match=match, cookie=0,
@@ -117,9 +120,10 @@ class SimpleSwitch(app_manager.RyuApp):
         self.datapath.send_msg(mod)
         
         #match2 = self.datapath.ofproto_parser.OFPMatch(dl_type=0x0800, nw_src=self.ipv4_to_int(host_addr), nw_dst_mask=32, tp_src=transport_port)
-        match2 = self.datapath.ofproto_parser.OFPMatch(dl_type=0x0800, nw_src=self.ipv4_to_int(host_addr), nw_dst_mask=32)
+        match2 = self.datapath.ofproto_parser.OFPMatch(dl_type=0x0800, nw_src=self.ipv4_to_int(host_addr), nw_dst_mask=32, nw_proto=nw_proto, tp_src=random_port)
         actions = [self.datapath.ofproto_parser.OFPActionSetNwSrc(self.ipv4_to_int(guest_addr))]
         actions.append(self.datapath.ofproto_parser.OFPActionSetDlSrc(haddr_to_bin(src_mac)))
+        actions.append(self.datapath.ofproto_parser.OFPActionSetTpSrc(dst_port))
         actions.append(self.datapath.ofproto_parser.OFPActionOutput(output_ovs_port))
         #actions.append(self.datapath.ofproto_parser.OFPActionOutput(65534))
         mod2 = self.datapath.ofproto_parser.OFPFlowMod(
