@@ -95,8 +95,8 @@ class SimpleSwitch(app_manager.RyuApp):
             i = (i << 8) | b
         return i
 
-    def packet_translate2(self, guest_addr, host_addr, bridge_mac, src_mac, nw_proto, transport_port, output_ovs_port, dst_port, dst_mac, random_port):
-        print "packet_translate {0} {1} {2} {3} {4} {5} {6} {7} {8} {9}".format(guest_addr, host_addr, bridge_mac, src_mac, nw_proto, transport_port, output_ovs_port, dst_port, dst_mac, random_port)  
+    def packet_translate2(self, guest_addr, host_addr, bridge_mac, src_mac, nw_proto, output_ovs_port, dst_port, dst_mac, random_port):
+        print "packet_translate {0} {1} {2} {3} {4} {5} {6} {7} {8}".format(guest_addr, host_addr, bridge_mac, src_mac, nw_proto, output_ovs_port, dst_port, dst_mac, random_port)  
         #time.sleep(3)
         if self.datapath == None:
             return
