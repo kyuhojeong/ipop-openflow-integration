@@ -1,4 +1,4 @@
-
+#!/usr/bin/env python
 
 import logging
 import struct
@@ -22,12 +22,14 @@ from ryu.controller import dpset
 
 import commands
 import fcntl
+import imp
 import json
 import random
 import socket
 import threading
 import select
 import struct
+import sys
 import time
 
  
@@ -42,6 +44,11 @@ WAN_IF_NAME = "eth0"
 BRIDGE_NAME = "nat-br"
 GATEWAY_IP  = "192.168.4.1"
 LAN_SUBNET_RANGE = 24
+IPOP_STARTS = True
+IPOP_CONFIG_COMMAND_LINE = ["-c", "config.json", "-i"]
+IPOP_TAP_INTERFACE_NAME = "ipop"
+IPOP_TINCAN_BINARY_PATH = "/home/kyuho/Workspace/libjingle/trunk/out/Release/ipop-tincan"
+IPOP_CONTROLLER_PATH = "/home/kyuho/Workspace/controllers/src/"
 
 def getHwAddr(ifname): 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -131,6 +138,29 @@ class NatSwitch(app_manager.RyuApp):
         self.dpset = kwargs['dpset']
         self.lan_ports_list = []
 
+        # Starts IPOP Controller
+        if IPOP_STARTS:
+            #ipop_tincan_stdin = "sudo " + IPOP_TINCAN_BINARY_PATH + " &> tincan.log ;"
+            #self.logger.info("Starting IPOP TINCAN BINARY(" + ipop_tincan_stdin + ")")
+            #ipop_tincan_stdout = commands.getoutput(ipop_tincan_stdin)
+            #self.logger.info("stdout:" + ipop_tincan_stdout)
+            print args
+            print kwargs
+            sys.path.append(IPOP_CONTROLLER_PATH)
+            print args
+            print kwargs
+            import controller
+            print args
+            print kwargs
+            controller.IpopController(IPOP_CONFIG_COMMAND_LINE)
+            print args
+            print kwargs
+            
+            #commands.getoutput("sudo ovs-vsctl del-port" + BRIDGE_NAME + IPOP_TAP_INTERFACE_NAME)
+            #commands.getoutput("sudo ovs-vsctl add-port" + BRIDGE_NAME + IPOP_TAP_INTERFACE_NAME)
+            print "Hm"
+
+
         # Retrieve IP of Gateway of Host network. 
         route_table_fd = open('/proc/net/route', 'r')
         route_table = route_table_fd.read()
@@ -138,7 +168,7 @@ class NatSwitch(app_manager.RyuApp):
         self.logger.info("My Host Gateway IP address:{0}".format(self.host_gw_ip))
 
         # Retrieve MAC address of Host Gateway. Looping arp table and find mac
-        # address
+        # address 
         arp_table_fd = open('/proc/net/arp', 'r')
         arp_table = arp_table_fd.read()
         for i in range(0, len(arp_table.split("\n"))-1):
@@ -170,9 +200,28 @@ class NatSwitch(app_manager.RyuApp):
 
         # Socket interface for communicating with IPOP
         self.oi_sock_local = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        self.oi_sock_remote = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        #self.oi_sock_remote = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        self.oi_sock_remote = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.oi_sock_local.bind(("::1", 30001))
-        self.oi_sock_remote.bind(("fd50:dbc:41f2:4a3c:345f:9be8:69ab:9886", 30002))
+
+        # TODO need more elaborate way to retrieve IPv6 address of ipop tap
+        #_ = commands.getoutput("ip address show dev "+"ipop")
+        #__ = _.split() 
+        #ipop_ipv6 = None
+        #for i in __:
+        #    if i[0:19] == "fd50:dbc:41f2:4a3c:":
+        #        ipop_ipv6 = i.split("/")[0]
+        #self.oi_sock_remote.bind((ipop_ipv6, 30002))
+
+        # TODO need more elaborate way to retrieve IPv4 address of ipop tap
+        _ = commands.getoutput("ip address show dev "+"ipop")
+        __ = _.split() 
+        ___ =  __.index("inet")
+        print ___ 
+        ipop_ipv4 = __[___ +1].split("/")[0]
+        print ipop_ipv4
+        self.oi_sock_remote.bind((ipop_ipv4, 30002))
+
         t = threading.Thread(target=self.run_oi_server)
         t.daemon = True
         t.start()
@@ -188,9 +237,8 @@ class NatSwitch(app_manager.RyuApp):
                 if msg["type"] == "packet_notify" and sock == self.oi_sock_local:
                     # TODO Port number should be assigned dynamically 
                     self.insert_packet_translate_flow_entry(
-                      wan_port=1, src_mac=msg["src_mac"],\
-                      nw_proto=msg["nw_proto"], src_ipv4=msg["src_ipv4"],\
-                      src_transport=msg["src_port"],\
+                      src_mac=msg["src_mac"], nw_proto=msg["nw_proto"],\
+                      src_ipv4=msg["src_ipv4"], src_transport=msg["src_port"],\
                       src_random_tp=msg["src_random_port"],\
                       dst_random_tp=msg["dst_random_port"],\
                       dst_guest_ip4=msg["dst_ipv4"],\
@@ -198,9 +246,8 @@ class NatSwitch(app_manager.RyuApp):
                       dst_transport=msg["dst_port"])
                 elif msg["type"] == "packet_notify" and sock == self.oi_sock_remote:
                     self.insert_packet_translate_flow_entry(
-                      wan_port=1, src_mac=msg["dst_mac"],\
-                      nw_proto=msg["nw_proto"], src_ipv4=msg["dst_ipv4"],\
-                      src_transport=msg["dst_port"],\
+                      src_mac=msg["dst_mac"], nw_proto=msg["nw_proto"],\
+                      src_ipv4=msg["dst_ipv4"], src_transport=msg["dst_port"],\
                       src_random_tp=msg["dst_random_port"],\
                       dst_random_tp=msg["src_random_port"],\
                       dst_guest_ip4=msg["src_ipv4"],\
@@ -209,24 +256,23 @@ class NatSwitch(app_manager.RyuApp):
                 else:
                     self.logger.info("This shouldn't happen")
 
-    def insert_packet_translate_flow_entry(self, wan_port, src_mac, nw_proto,\
-      src_ipv4, src_transport, src_random_tp, dst_random_tp, dst_guest_ip4,\
-      dst_host_ip4, dst_transport):
+    def insert_packet_translate_flow_entry(self, src_mac, nw_proto, src_ipv4,\
+      src_transport, src_random_tp, dst_random_tp, dst_guest_ip4, dst_host_ip4,\
+      dst_transport):
 
-        self.logger.info("insert_packet_translate_flow_entry wan_port:{0}, "
-          "nw_proto:{1} src_mac:{2}, src_ipv4:{3}, src_transport:{4}, "
-          "src_random_tp:{5}, dst_randmo_tp:{6} dst_guest_ip4:{7}".format(\
-          wan_port, nw_proto, src_mac,src_ipv4, src_transport, src_random_tp,\
-          dst_random_tp, dst_guest_ip4, dst_host_ip4, dst_transport))
+        self.logger.info("insert_packet_translate_flow_entry nw_proto:{0}"
+          " src_mac:{1}, src_ipv4:{2}, src_transport:{3}, src_random_tp:{4},"
+          " dst_randmo_tp:{5}, dst_guest_ip4:{6}, dst_host_ip4:{7}"
+          " dst_transport:{8}".format(nw_proto, src_mac, src_ipv4,\
+          src_transport, src_random_tp, dst_random_tp, dst_guest_ip4,\
+          dst_host_ip4, dst_transport))
 
         if self.datapath == None:
             return
         ofproto = self.datapath.ofproto
-        #in_match = self.datapath.ofproto_parser.OFPMatch(in_port=msg.in_port,\
-        in_match = self.datapath.ofproto_parser.OFPMatch(\
-           dl_type=0x0800, nw_src=ip4_a2i(src_ipv4),\
-           nw_dst=ip4_a2i(dst_guest_ip4), nw_proto=nw_proto,\
-           tp_src=src_transport, tp_dst=dst_transport)
+        in_match = self.datapath.ofproto_parser.OFPMatch(dl_type=0x0800,\
+           nw_src=ip4_a2i(src_ipv4), nw_dst=ip4_a2i(dst_guest_ip4),\
+           nw_proto=nw_proto, tp_src=src_transport, tp_dst=dst_transport)
 
         in_actions = []
         in_actions.append(self.datapath.ofproto_parser.OFPActionSetDlSrc(\
@@ -239,36 +285,40 @@ class NatSwitch(app_manager.RyuApp):
                           ip4_a2i(dst_host_ip4)))
         in_actions.append(self.datapath.ofproto_parser.OFPActionSetTpSrc(\
                          src_random_tp))
-        in_actions.append(self.datapath.ofproto_parser.OFPActionSetTPDst(\
+        in_actions.append(self.datapath.ofproto_parser.OFPActionSetTpDst(\
                           dst_random_tp))
-        in_actions.append(self.datapath.ofproto_parser.OFPActionOutput(1))
+        in_actions.append(self.datapath.ofproto_parser.OFPActionOutput(\
+                          self.wan_port))
 
         in_mod = self.datapath.ofproto_parser.OFPFlowMod(\
-            datapath=self.datapath, match=match, cookie=0,
+            datapath=self.datapath, match=in_match, cookie=0,
             command=ofproto.OFPFC_ADD, idle_timeout=0, hard_timeout=0,
             priority=ofproto.OFP_DEFAULT_PRIORITY+2,
-            flags=ofproto.OFPFF_SEND_FLOW_REM, in_actions=actions)
+            flags=ofproto.OFPFF_SEND_FLOW_REM, actions=in_actions)
         self.datapath.send_msg(in_mod)
 
-        out_match = self.datapath.ofproto_parser.OFPMatch(in_port=1, dl_type=0x0800,\
+        out_match = self.datapath.ofproto_parser.OFPMatch(dl_type=0x0800,\
            nw_src=ip4_a2i(dst_host_ip4), nw_dst=ip4_a2i(self.host_ip),\
-           nw_proto=nw_proto, tp_src=dst_transport, tp_dst=src_transport)
+           nw_proto=nw_proto, tp_src=dst_random_tp, tp_dst=src_random_tp)
 
         out_actions = []
         out_actions.append(self.datapath.ofproto_parser.OFPActionSetDlSrc(\
                            mac_a2b(self.gw_mac)))
         out_actions.append(self.datapath.ofproto_parser.OFPActionSetDlDst(\
-                           mac_a2b(eth.src)))
+                           mac_a2b(src_mac)))
         out_actions.append(self.datapath.ofproto_parser.OFPActionSetNwSrc(\
-                           ip4_a2i(dst_guest_ipv4)))
+                           ip4_a2i(dst_guest_ip4)))
         out_actions.append(self.datapath.ofproto_parser.OFPActionSetNwDst(\
                            ip4_a2i(src_ipv4)))
         out_actions.append(self.datapath.ofproto_parser.OFPActionSetTpSrc(\
-                           dst_random_tp))
-        out_actions.append(self.datapath.ofproto_parser.OFPActionSetTPDst(\
-                           src_random_tp))
+                           dst_transport))
+        out_actions.append(self.datapath.ofproto_parser.OFPActionSetTpDst(\
+                           src_transport))
+        #out_actions.append(self.datapath.ofproto_parser.OFPActionOutput(\
+        #                   ))
         out_actions.append(self.datapath.ofproto_parser.OFPActionOutput(\
-                           msg.in_port))
+                            ofproto.OFPP_LOCAL))
+
 
         out_mod = self.datapath.ofproto_parser.OFPFlowMod(datapath=self.datapath,\
           match=out_match, cookie=0, command=ofproto.OFPFC_ADD, idle_timeout=0,\
@@ -532,7 +582,7 @@ class NatSwitch(app_manager.RyuApp):
 
                 # TODO WE assume the host physical interface is at port 1
                 #actions = [datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_LOCAL)]
-                actions = [datapath.ofproto_parser.OFPActionOutput(1)]
+                actions = [datapath.ofproto_parser.OFPActionOutput(self.wan_port)]
 
                 # Update packet data
                 new_data = ""
@@ -664,6 +714,8 @@ class NatSwitch(app_manager.RyuApp):
                 actions = []
                 for i in self.lan_ports_list:
                     actions.append(datapath.ofproto_parser.OFPActionOutput(i))
+                actions.append(datapath.ofproto_parser.OFPActionOutput(\
+                              ofproto.OFPP_LOCAL))
 
             # UPdate MAC-port table
             print "updateing LAN MAC PORT table"
