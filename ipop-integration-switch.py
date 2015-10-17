@@ -45,7 +45,8 @@ BRIDGE_NAME = "nat-br"
 GATEWAY_IP  = "192.168.4.1"
 LAN_SUBNET_RANGE = 24
 IPOP_STARTS = True
-IPOP_CONFIG_COMMAND_LINE = ["-c", "config.json", "-i"]
+#IPOP_CONFIG_COMMAND_LINE = ["-c", "config.json", "-i"]
+IPOP_CONFIG_COMMAND_LINE = ["-c", "config.json"]
 IPOP_TAP_INTERFACE_NAME = "ipop"
 IPOP_TINCAN_BINARY_PATH = "/home/kyuho/Workspace/libjingle/trunk/out/Release/ipop-tincan"
 IPOP_CONTROLLER_PATH = "/home/kyuho/Workspace/controllers/src/"
@@ -140,25 +141,22 @@ class NatSwitch(app_manager.RyuApp):
 
         # Starts IPOP Controller
         if IPOP_STARTS:
+            # Kind of wanted to tincan binary itself. but failed. It is hard to start sudo command through script.
             #ipop_tincan_stdin = "sudo " + IPOP_TINCAN_BINARY_PATH + " &> tincan.log ;"
             #self.logger.info("Starting IPOP TINCAN BINARY(" + ipop_tincan_stdin + ")")
             #ipop_tincan_stdout = commands.getoutput(ipop_tincan_stdin)
             #self.logger.info("stdout:" + ipop_tincan_stdout)
-            print args
-            print kwargs
             sys.path.append(IPOP_CONTROLLER_PATH)
-            print args
-            print kwargs
             import controller
-            print args
-            print kwargs
-            controller.IpopController(IPOP_CONFIG_COMMAND_LINE)
-            print args
-            print kwargs
+            ipop = controller.IpopController(IPOP_CONFIG_COMMAND_LINE, self.logger)
+            print dir(self.logger)
+            ipop.run()
             
-            #commands.getoutput("sudo ovs-vsctl del-port" + BRIDGE_NAME + IPOP_TAP_INTERFACE_NAME)
-            #commands.getoutput("sudo ovs-vsctl add-port" + BRIDGE_NAME + IPOP_TAP_INTERFACE_NAME)
-            print "Hm"
+            self.logger.setLevel(logging.DEBUG)
+            _ = commands.getoutput("sudo ovs-vsctl del-port" + BRIDGE_NAME + IPOP_TAP_INTERFACE_NAME)
+            self.logger.info("Removing " + IPOP_TAP_INTERFACE_NAME + " to " + BRIDGE_NAME + "\nreturning --- ".format(_))
+            out = commands.getoutput("sudo ovs-vsctl add-port" + BRIDGE_NAME + IPOP_TAP_INTERFACE_NAME)
+            self.logger.info("Attaching " + IPOP_TAP_INTERFACE_NAME + " to " + BRIDGE_NAME + "\nreturning --- ".format(_))
 
 
         # Retrieve IP of Gateway of Host network. 
@@ -214,17 +212,18 @@ class NatSwitch(app_manager.RyuApp):
         #self.oi_sock_remote.bind((ipop_ipv6, 30002))
 
         # TODO need more elaborate way to retrieve IPv4 address of ipop tap
-        _ = commands.getoutput("ip address show dev "+"ipop")
-        __ = _.split() 
-        ___ =  __.index("inet")
-        print ___ 
-        ipop_ipv4 = __[___ +1].split("/")[0]
-        print ipop_ipv4
-        self.oi_sock_remote.bind((ipop_ipv4, 30002))
+        # Don't need this part. We move to inherent API for ICC. Thus not creating socket
+        #_ = commands.getoutput("ip address show dev "+"ipop")
+        #__ = _.split() 
+        #___ =  __.index("inet")
+        #print ___ 
+        #ipop_ipv4 = __[___ +1].split("/")[0]
+        #print ipop_ipv4
+        #self.oi_sock_remote.bind((ipop_ipv4, 30002))
 
-        t = threading.Thread(target=self.run_oi_server)
-        t.daemon = True
-        t.start()
+        #t = threading.Thread(target=self.run_oi_server)
+        #t.daemon = True
+        #t.start()
 
 
     def run_oi_server(self):
